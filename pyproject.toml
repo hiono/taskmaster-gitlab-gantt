@@ -1,0 +1,37 @@
+[project]
+name = "taskmaster-gitlab-gantt"
+version = "0.1.0"
+description = "Generate interactive Gantt charts from Taskmaster and GitLab data."
+authors = [
+    { name = "H.Ono", email = "highfrontier@gmail.com" }
+]
+dependencies = [
+    "python-gitlab",
+    "python-dotenv",
+    "pandas",
+    "plotly",
+    "holidays",
+    "kaleido",
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = { file = "LICENSE" }
+
+[project.scripts]
+tmgantt = "tmgantt.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 128
+
+[tool.isort]
+profile = "black"
+line_length = 128
+known_first_party = ["tmgantt"]
+sections = "FUTURE,STDLIB,THIRDPARTY,FIRSTPARTY,LOCALFOLDER"
