@@ -215,6 +215,9 @@ def prepare_gantt_data(
                     logger.warning(
                         f"Task {tm_id} (done): Adjusted start date to be <= end date: {current_task_info['start']}"
                     )
+                # If start and end dates are the same for a done task, extend end date by 1 day for visibility
+                if current_task_info["start"] == current_task_info["end"]:
+                    current_task_info["end"] = current_task_info["end"] + timedelta(days=1)
                 continue  # Skip further ASAP logic for done tasks
 
             # --- 2. Handle non-done tasks: apply ASAP logic ---
