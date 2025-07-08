@@ -48,7 +48,9 @@ def load_taskmaster_tasks(tag="master"):
 
             def flatten(tasks_list, parent_id=None):
                 for task in tasks_list:
-                    current_id = f"{parent_id}.{task['id']}" if parent_id else str(task["id"])
+                    current_id = (
+                        f"{parent_id}.{task['id']}" if parent_id else str(task["id"])
+                    )
                     all_tasks[current_id] = task
                     if "subtasks" in task and task.get("subtasks"):
                         flatten(task["subtasks"], current_id)
@@ -56,13 +58,17 @@ def load_taskmaster_tasks(tag="master"):
             flatten(tasks_data[tag]["tasks"])
             logger.info(f"Successfully loaded {len(all_tasks)} tasks from Taskmaster.")
         else:
-            logger.warning(f"Tag '{tag}' not found in {tasks_path}. No tasks will be loaded.")
+            logger.warning(
+                f"Tag '{tag}' not found in {tasks_path}. No tasks will be loaded."
+            )
     except FileNotFoundError:
         logger.error(f"Taskmaster file not found at {tasks_path}")
     except json.JSONDecodeError:
         logger.error(f"Failed to parse Taskmaster JSON file: {tasks_path}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred while loading Taskmaster tasks: {e}")
+        logger.error(
+            f"An unexpected error occurred while loading Taskmaster tasks: {e}"
+        )
     return all_tasks
 
 
@@ -124,16 +130,39 @@ def parse_task_list(description):
     return tasks
 
 
-def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays):
-    """Prepares and processes data into a pandas DataFrame for Plotly."""
+def prepare_gantt_data(
+    taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays
+):
+    """Prepares and processes data into a pandas DataFrame for Plotly using ASAP scheduling."""
     df_data = []
     today = datetime.now().date()
 
-    # First pass: determine dates for all tasks
+    # --- Initial Date Determination ---
+    # Find the earliest created_at among all GitLab issues if overall_start_date is not set
+    earliest_created_at = None
+    if not overall_start_date:
+        for issue in task_id_to_issue.values():
+            if issue and issue.created_at:
+                issue_created_at = datetime.fromisoformat(issue.created_at).date()
+                if (
+                    earliest_created_at is None
+                    or issue_created_at < earliest_created_at
+                ):
+                    earliest_created_at = issue_created_at
+        if earliest_created_at:
+            logger.info(
+                f"No overall_start_date. Using earliest GitLab issue created_at: {earliest_created_at}"
+            )
+        else:
+            logger.warning(
+                "Could not determine earliest created_at from GitLab issues. Falling back to today for initial start dates."
+            )
+
+    # Initialize task_dates with end_dates first
     task_dates = {}
     for tm_id, tm_task in taskmaster_tasks.items():
         issue = task_id_to_issue.get(tm_id)
-        start_date, end_date = None, None
+        end_date = None
 
         # Determine end_date
         if tm_task.get("status") == "done" and issue and issue.closed_at:
@@ -146,73 +175,132 @@ def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, c
             end_date = today + timedelta(days=7)  # Fallback
             logger.debug(f"Task {tm_id}: Using fallback end_date: {end_date}")
 
-        # Auto-extend delayed tasks
-        if tm_task.get("status") != "done" and end_date < today:
-            logger.info(f"Task '{tm_id}' is delayed. Extending end_date to today.")
-            end_date = today
-
         task_dates[tm_id] = {"start": None, "end": end_date}
 
-    # Second pass: determine start_dates based on dependencies
-    for tm_id, tm_task in taskmaster_tasks.items():
-        if not tm_task.get("dependencies"):
-            # Priority A: overall_start_date from .env
-            if overall_start_date:
-                task_dates[tm_id]["start"] = overall_start_date
-                logger.debug(f"Task {tm_id}: Start date from overall_start_date: {overall_start_date}")
-            else:
-                # Priority B: created_at from GitLab Issue
-                issue = task_id_to_issue.get(tm_id)
-                if issue and issue.created_at:
-                    task_dates[tm_id]["start"] = datetime.fromisoformat(issue.created_at).date()
-                    logger.debug(f"Task {tm_id}: Start date from created_at: {task_dates[tm_id]['start']}")
-                else:
-                    # Fallback: today
-                    task_dates[tm_id]["start"] = today
-                    logger.debug(f"Task {tm_id}: Start date from fallback today: {today}")
-        else:
-            # Dependent tasks: next working day after max dependency end date
-            max_dep_end_date = None
-            for dep_id in tm_task["dependencies"]:
-                dep_dates = task_dates.get(str(dep_id))
-                if dep_dates and dep_dates["end"]:
-                    if max_dep_end_date is None or dep_dates["end"] > max_dep_end_date:
-                        max_dep_end_date = dep_dates["end"]
+    # --- ASAP Scheduling Logic ---
+    # Process tasks in a topological order if possible, or iteratively until stable
+    # For simplicity, we'll iterate a few times to propagate dates
+    # A more robust solution would use a proper topological sort or critical path algorithm.
 
-            if max_dep_end_date:
-                task_dates[tm_id]["start"] = get_next_working_day(max_dep_end_date, country_holidays)
-                logger.debug(f"Task {tm_id}: Start date from dependency: {task_dates[tm_id]['start']}")
-            else:  # Fallback for dependencies if no valid dependency end date found
-                task_dates[tm_id]["start"] = overall_start_date if overall_start_date else today
-                logger.warning(
-                    f"Task {tm_id}: No valid dependency end date found. Using fallback start date: {task_dates[tm_id]['start']}"
+    # Sort tasks by ID to ensure a somewhat consistent processing order,
+    # though true topological sort is better for complex dependencies.
+    sorted_tm_ids = sorted(
+        taskmaster_tasks.keys(),
+        key=lambda x: [int(i) if i.isdigit() else i for i in x.split(".")],
+    )
+
+    # Iterate multiple times to ensure all dependencies are resolved
+    for _ in range(len(sorted_tm_ids) * 2):  # Iterate enough times to propagate changes
+        for tm_id in sorted_tm_ids:
+            tm_task = taskmaster_tasks[tm_id]
+            current_task_info = task_dates[tm_id]
+            issue = task_id_to_issue.get(tm_id)
+
+            # --- 1. Handle 'done' tasks: their dates are fixed and should not be changed by ASAP logic ---
+            if tm_task.get("status") == "done":
+                # Ensure start date is set based on created_at or inferred from closed_at
+                if issue and issue.created_at:
+                    current_task_info["start"] = datetime.fromisoformat(
+                        issue.created_at
+                    ).date()
+                else:
+                    # Fallback if no created_at for done task
+                    current_task_info["start"] = current_task_info["end"] - timedelta(
+                        days=1
+                    )
+
+                # Ensure done task's start date is not pushed beyond its end date (closed_at)
+                if current_task_info["start"] > current_task_info["end"]:
+                    current_task_info["start"] = current_task_info["end"]
+                    logger.warning(
+                        f"Task {tm_id} (done): Adjusted start date to be <= end date: {current_task_info['start']}"
+                    )
+                continue  # Skip further ASAP logic for done tasks
+
+            # --- 2. Handle non-done tasks: apply ASAP logic ---
+            earliest_possible_start = None
+
+            # Prioritize task's own created_at if it's an independent task
+            if not tm_task.get("dependencies") and issue and issue.created_at:
+                task_created_at = datetime.fromisoformat(issue.created_at).date()
+                if overall_start_date:
+                    # Use the later of task_created_at and overall_start_date
+                    earliest_possible_start = max(task_created_at, overall_start_date)
+                else:
+                    earliest_possible_start = task_created_at
+
+            # If dependencies exist, or no specific created_at for independent task, calculate based on dependencies
+            if tm_task.get("dependencies"):
+                max_dep_end_date = None
+                for dep_id in tm_task["dependencies"]:
+                    dep_dates = task_dates.get(str(dep_id))
+                    if dep_dates and dep_dates["end"]:
+                        if (
+                            max_dep_end_date is None
+                            or dep_dates["end"] > max_dep_end_date
+                        ):
+                            max_dep_end_date = dep_dates["end"]
+
+                if max_dep_end_date:
+                    dep_based_start = get_next_working_day(
+                        max_dep_end_date, country_holidays
+                    )
+                    if (
+                        earliest_possible_start is None
+                        or dep_based_start > earliest_possible_start
+                    ):
+                        earliest_possible_start = dep_based_start
+
+            # Fallback if no dependencies and no specific created_at, or if dependencies result in earlier date
+            if earliest_possible_start is None:
+                if overall_start_date:
+                    earliest_possible_start = overall_start_date
+                elif earliest_created_at:
+                    earliest_possible_start = earliest_created_at
+                else:
+                    earliest_possible_start = today  # Final Fallback
+
+            # Update current task's start date
+            if (
+                current_task_info["start"] is None
+                or earliest_possible_start > current_task_info["start"]
+            ):
+                current_task_info["start"] = earliest_possible_start
+                logger.debug(
+                    f"Task {tm_id}: Start date set to {current_task_info['start']}"
                 )
 
-    # Final pass: build DataFrame and adjust dates
+            # Ensure end_date is not before start_date (minimum 1 day duration)
+            if current_task_info["end"] < current_task_info["start"]:
+                current_task_info["end"] = current_task_info["start"] + timedelta(
+                    days=1
+                )
+                logger.warning(
+                    f"Task {tm_id}: End date adjusted to {current_task_info['end']} to be >= start date."
+                )
+            elif current_task_info["end"] == current_task_info["start"]:
+                current_task_info["end"] = current_task_info["start"] + timedelta(
+                    days=1
+                )
+                logger.debug(
+                    f"Task {tm_id}: End date adjusted by 1 day as start and end were same."
+                )
+
+    # Final pass: build DataFrame
     for tm_id, tm_task in taskmaster_tasks.items():
         start_date = task_dates[tm_id]["start"]
         end_date = task_dates[tm_id]["end"]
 
         if start_date is None:
-            logger.warning(f"Task {tm_id}: Start date could not be determined. Using today.")
+            logger.warning(
+                f"Task {tm_id}: Start date could not be determined. Using today."
+            )
             start_date = today
         if end_date is None:
-            logger.warning(f"Task {tm_id}: End date could not be determined. Using start_date + 7 days.")
-            end_date = start_date + timedelta(days=7)
-
-        # 完了済みタスクの場合、開始日が終了日より後になる場合は開始日を終了日に合わせる
-        if tm_task.get("status") == "done" and start_date > end_date:
             logger.warning(
-                f"Task {tm_id}: Done task's start date {start_date} is after its end date {end_date}. Adjusting start date to end date."
+                f"Task {tm_id}: End date could not be determined. Using start_date + 7 days."
             )
-            start_date = end_date
-
-        if end_date < start_date:
-            logger.warning(f"Task {tm_id}: End date {end_date} is before start date {start_date}. Adjusting end date.")
-            end_date = start_date + timedelta(days=1)
-        elif end_date == start_date:
-            logger.debug(f"Task {tm_id}: Start and end dates are the same. Adjusting end date by 1 day.")
-            end_date = start_date + timedelta(days=1)
+            end_date = start_date + timedelta(days=7)
 
         status = tm_task.get("status", "unknown")
         color_map = {
@@ -232,6 +320,9 @@ def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, c
                 Color=color_map.get(status, "#6c757d"),
                 TaskID=tm_id,  # Add TaskID for dependency drawing
             )
+        )
+        logger.debug(
+            f"Task {tm_id}: Start={start_date}, End={end_date}, Status={status}"
         )
 
         # Subtasks from description
@@ -253,6 +344,9 @@ def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, c
                         TaskID=f"{tm_id}.{i+1}",  # Add TaskID for subtasks
                     )
                 )
+                logger.debug(
+                    f"Subtask {sub_task_name}: Start={start_date}, End={end_date}, Status={sub_task_status}"
+                )
 
     logger.info(f"Prepared {len(df_data)} entries for Gantt chart.")
     return pd.DataFrame(df_data)
@@ -261,7 +355,15 @@ def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, c
 # --- Chart Generation Module ---
 
 
-def generate_gantt_chart(df, output_path, taskmaster_tasks, dry_run, output_format, project_name, country_holidays):
+def generate_gantt_chart(
+    df,
+    output_path,
+    taskmaster_tasks,
+    dry_run,
+    output_format,
+    project_name,
+    country_holidays,
+):
     """Generates and saves the Gantt chart HTML file using Plotly."""
     if df.empty:
         logger.warning("DataFrame is empty. Cannot generate chart.")
@@ -321,7 +423,9 @@ def generate_gantt_chart(df, output_path, taskmaster_tasks, dry_run, output_form
 
     annotations = []
     if y_axis_task_labels is None or not y_axis_task_labels:  # Added check
-        logger.warning("No y-axis tick labels found. Skipping dependency arrow drawing.")
+        logger.warning(
+            "No y-axis tick labels found. Skipping dependency arrow drawing."
+        )
     else:
         y_axis_task_ids = [label.split(": ", 1)[0] for label in y_axis_task_labels]
         y_axis_position_map = {task_id: i for i, task_id in enumerate(y_axis_task_ids)}
@@ -330,14 +434,18 @@ def generate_gantt_chart(df, output_path, taskmaster_tasks, dry_run, output_form
             if tm_task.get("dependencies"):
                 current_task_df_row = df[df["TaskID"] == tm_id]
                 if current_task_df_row.empty:
-                    logger.warning(f"Current task {tm_id} not found in DataFrame for dependency drawing.")
+                    logger.warning(
+                        f"Current task {tm_id} not found in DataFrame for dependency drawing."
+                    )
                     continue
                 current_task_df_row = current_task_df_row.iloc[0]
 
                 for dep_id in tm_task["dependencies"]:
                     dep_task_df_row = df[df["TaskID"] == str(dep_id)]
                     if dep_task_df_row.empty:
-                        logger.warning(f"Dependent task {dep_id} not found in DataFrame for dependency drawing.")
+                        logger.warning(
+                            f"Dependent task {dep_id} not found in DataFrame for dependency drawing."
+                        )
                         continue
                     dep_task_df_row = dep_task_df_row.iloc[0]
 
@@ -393,11 +501,15 @@ def generate_gantt_chart(df, output_path, taskmaster_tasks, dry_run, output_form
                 fig.write_image(str(output_path))
                 logger.info(f"Gantt chart saved to: {output_path}")
             except Exception as e:
-                logger.error(f"Failed to save image to {output_path}. Ensure kaleido is installed: {e}")
+                logger.error(
+                    f"Failed to save image to {output_path}. Ensure kaleido is installed: {e}"
+                )
         else:
             logger.error(f"Unsupported output format: {output_format}")
     else:
-        logger.info(f"Dry run: Gantt chart would have been saved to: {output_path} (format: {output_format})")
+        logger.info(
+            f"Dry run: Gantt chart would have been saved to: {output_path} (format: {output_format})"
+        )
 
 
 # --- Main Execution Flow ---
@@ -405,7 +517,9 @@ def generate_gantt_chart(df, output_path, taskmaster_tasks, dry_run, output_form
 
 def main():
     """Main function to run the Gantt chart generator."""
-    parser = argparse.ArgumentParser(description="Generate an interactive Gantt chart from Taskmaster and GitLab data.")
+    parser = argparse.ArgumentParser(
+        description="Generate an interactive Gantt chart from Taskmaster and GitLab data."
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -453,10 +567,14 @@ def main():
     holiday_country = config.get("HOLIDAY_COUNTRY", "JP")  # Default to Japan
 
     try:
-        country_holidays = holidays.CountryHoliday(holiday_country, years=date.today().year)
+        country_holidays = holidays.CountryHoliday(
+            holiday_country, years=date.today().year
+        )
         logger.info(f"Using holidays for {holiday_country}.")
     except KeyError:
-        logger.warning(f"Holiday country '{holiday_country}' not found. No holidays will be observed.")
+        logger.warning(
+            f"Holiday country '{holiday_country}' not found. No holidays will be observed."
+        )
         country_holidays = {}
 
     gitlab_ssl_verify = True
@@ -502,10 +620,20 @@ def main():
 
     task_id_to_issue = map_tasks_and_issues(gitlab_issues)
 
-    df = prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays)
+    df = prepare_gantt_data(
+        taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays
+    )
 
     # 4. Generate chart
-    generate_gantt_chart(df, Path(args.output), taskmaster_tasks, args.dry_run, args.format, project_name, country_holidays)
+    generate_gantt_chart(
+        df,
+        Path(args.output),
+        taskmaster_tasks,
+        args.dry_run,
+        args.format,
+        project_name,
+        country_holidays,
+    )
 
     logger.info("--- Gantt Chart Generation Finished ---")
 

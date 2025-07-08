@@ -73,7 +73,7 @@ HOLIDAY_COUNTRY="JP" # Optional: e.g., "US", "GB", "FR", "CN". Defaults to "JP" 
 - `GITLAB_PERSONAL_ACCESS_TOKEN`: A GitLab Personal Access Token with `api` scope. You can generate one from `User Settings > Access Tokens`.
 - `GITLAB_PROJECT_ID`: The numerical ID of the GitLab project you want to generate the Gantt chart for.
 - `GITLAB_SSL_VERIFY`: Controls SSL certificate verification. Set to `"false"` to disable verification (not recommended for production), or provide a path to a CA bundle file.
-- `GANTT_START_DATE`: An optional overall start date for the Gantt chart in `YYYY-MM-DD` format. If not set, the tool will derive task start dates from `created_at` or dependency logic.
+- `GANTT_START_DATE`: An optional overall start date for the Gantt chart in `YYYY-MM-DD` format. If not set, task start dates are derived from `created_at` or dependency logic. When set, it acts as a minimum start date for non-completed tasks without dependencies, effectively shifting their start date to `GANTT_START_DATE` if their `created_at` is earlier.
 
 **Important**: Add your `.env` file to `.gitignore` to prevent it from being committed to your repository.
 
