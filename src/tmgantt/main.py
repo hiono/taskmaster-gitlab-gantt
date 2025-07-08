@@ -11,7 +11,6 @@ Refer to `taskmaster-gitlab-gantt-spec.md` for detailed specifications.
 
 import argparse
 import json
-import logging
 import re
 import sys
 from datetime import date, datetime, timedelta
@@ -23,13 +22,22 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import dotenv_values
+from vibelogger import VibeLoggerConfig, create_logger
 
 # --- Constants & Settings ---
 # TASKS_PATH = Path("/workspace/.taskmaster/tasks/tasks.json") # Moved to main
 # DEFAULT_OUTPUT_HTML_PATH = Path("/workspace/gantt_chart.html") # Moved to main
 
 # --- Logger Setup ---
-logger = logging.getLogger(__name__)
+# Configure VibeLogger to save logs to a file and keep them in memory for AI analysis
+vibe_config = VibeLoggerConfig(
+    log_file="./logs/tmgantt_vibe.log",  # Specify a log file path
+    max_file_size_mb=10,  # Max 10MB per log file
+    auto_save=True,
+    keep_logs_in_memory=True,
+    max_memory_logs=1000,  # Keep last 1000 logs in memory
+)
+logger = create_logger(config=vibe_config)
 
 
 # --- Data Acquisition & Processing Modules ---
@@ -48,26 +56,40 @@ def load_taskmaster_tasks(tag="master"):
 
             def flatten(tasks_list, parent_id=None):
                 for task in tasks_list:
-                    current_id = (
-                        f"{parent_id}.{task['id']}" if parent_id else str(task["id"])
-                    )
+                    current_id = f"{parent_id}.{task['id']}" if parent_id else str(task["id"])
                     all_tasks[current_id] = task
                     if "subtasks" in task and task.get("subtasks"):
                         flatten(task["subtasks"], current_id)
 
             flatten(tasks_data[tag]["tasks"])
-            logger.info(f"Successfully loaded {len(all_tasks)} tasks from Taskmaster.")
+            logger.info(
+                operation="load_taskmaster_tasks",
+                message=f"Successfully loaded {len(all_tasks)} tasks from Taskmaster.",
+                context={"num_tasks": len(all_tasks)},
+            )
         else:
             logger.warning(
-                f"Tag '{tag}' not found in {tasks_path}. No tasks will be loaded."
+                operation="load_taskmaster_tasks",
+                message=f"Tag '{tag}' not found in {tasks_path}. No tasks will be loaded.",
+                context={"tag": tag, "tasks_path": str(tasks_path)},
             )
     except FileNotFoundError:
-        logger.error(f"Taskmaster file not found at {tasks_path}")
+        logger.error(
+            operation="load_taskmaster_tasks",
+            message=f"Taskmaster file not found at {tasks_path}",
+            context={"tasks_path": str(tasks_path)},
+        )
     except json.JSONDecodeError:
-        logger.error(f"Failed to parse Taskmaster JSON file: {tasks_path}")
+        logger.error(
+            operation="load_taskmaster_tasks",
+            message=f"Failed to parse Taskmaster JSON file: {tasks_path}",
+            context={"tasks_path": str(tasks_path)},
+        )
     except Exception as e:
         logger.error(
-            f"An unexpected error occurred while loading Taskmaster tasks: {e}"
+            operation="load_taskmaster_tasks",
+            message=f"An unexpected error occurred while loading Taskmaster tasks: {e}",
+            context={"error": str(e)},
         )
     return all_tasks
 
@@ -79,13 +101,23 @@ def get_gitlab_issues(gl, project_id):
     try:
         project = gl.projects.get(project_id)
         project_name = project.name_with_namespace  # Get project name
-        logger.info(f"Accessing GitLab project: '{project_name}'")
+        logger.info(operation="get_gitlab_issues", message=f"Accessing GitLab project: '{project_name}'")
         issues = project.issues.list(all=True)
-        logger.info(f"Successfully fetched {len(issues)} issues from GitLab.")
+        logger.info(
+            operation="get_gitlab_issues",
+            message=f"Successfully fetched {len(issues)} issues from GitLab.",
+            context={"num_issues": len(issues)},
+        )
     except gitlab.exceptions.GitlabError as e:
-        logger.error(f"GitLab API error while fetching issues: {e}")
+        logger.error(
+            operation="get_gitlab_issues", message=f"GitLab API error while fetching issues: {e}", context={"error": str(e)}
+        )
     except Exception as e:
-        logger.error(f"An unexpected error occurred while fetching GitLab issues: {e}")
+        logger.error(
+            operation="get_gitlab_issues",
+            message=f"An unexpected error occurred while fetching GitLab issues: {e}",
+            context={"error": str(e)},
+        )
     return issues, project_name  # Return project_name as well
 
 
@@ -96,7 +128,11 @@ def map_tasks_and_issues(gitlab_issues):
         match = re.match(r"^([0-9\.]+):", issue.title)
         if match:
             mapping[match.group(1)] = issue
-    logger.debug(f"Mapped {len(mapping)} GitLab issues to Taskmaster IDs.")
+    logger.debug(
+        operation="map_tasks_and_issues",
+        message=f"Mapped {len(mapping)} GitLab issues to Taskmaster IDs.",
+        context={"num_mapped_issues": len(mapping)},
+    )
     return mapping
 
 
@@ -130,9 +166,7 @@ def parse_task_list(description):
     return tasks
 
 
-def prepare_gantt_data(
-    taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays
-):
+def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays):
     """Prepares and processes data into a pandas DataFrame for Plotly using ASAP scheduling."""
     df_data = []
     today = datetime.now().date()
@@ -144,18 +178,18 @@ def prepare_gantt_data(
         for issue in task_id_to_issue.values():
             if issue and issue.created_at:
                 issue_created_at = datetime.fromisoformat(issue.created_at).date()
-                if (
-                    earliest_created_at is None
-                    or issue_created_at < earliest_created_at
-                ):
+                if earliest_created_at is None or issue_created_at < earliest_created_at:
                     earliest_created_at = issue_created_at
         if earliest_created_at:
             logger.info(
-                f"No overall_start_date. Using earliest GitLab issue created_at: {earliest_created_at}"
+                operation="prepare_gantt_data",
+                message=f"No overall_start_date. Using earliest GitLab issue created_at: {earliest_created_at}",
+                context={"earliest_created_at": str(earliest_created_at)},
             )
         else:
             logger.warning(
-                "Could not determine earliest created_at from GitLab issues. Falling back to today for initial start dates."
+                operation="prepare_gantt_data",
+                message="Could not determine earliest created_at from GitLab issues. Falling back to today for initial start dates.",
             )
 
     # Initialize task_dates with end_dates first
@@ -167,13 +201,25 @@ def prepare_gantt_data(
         # Determine end_date
         if tm_task.get("status") == "done" and issue and issue.closed_at:
             end_date = datetime.fromisoformat(issue.closed_at).date()
-            logger.debug(f"Task {tm_id}: Using closed_at for end_date: {end_date}")
+            logger.debug(
+                operation="prepare_gantt_data",
+                message=f"Task {tm_id}: Using closed_at for end_date: {end_date}",
+                context={"task_id": tm_id, "end_date": str(end_date), "source": "closed_at"},
+            )
         elif issue and issue.due_date:
             end_date = datetime.strptime(issue.due_date, "%Y-%m-%d").date()
-            logger.debug(f"Task {tm_id}: Using due_date for end_date: {end_date}")
+            logger.debug(
+                operation="prepare_gantt_data",
+                message=f"Task {tm_id}: Using due_date for end_date: {end_date}",
+                context={"task_id": tm_id, "end_date": str(end_date), "source": "due_date"},
+            )
         else:
             end_date = today + timedelta(days=7)  # Fallback
-            logger.debug(f"Task {tm_id}: Using fallback end_date: {end_date}")
+            logger.debug(
+                operation="prepare_gantt_data",
+                message=f"Task {tm_id}: Using fallback end_date: {end_date}",
+                context={"task_id": tm_id, "end_date": str(end_date), "source": "fallback"},
+            )
 
         task_dates[tm_id] = {"start": None, "end": end_date}
 
@@ -200,24 +246,35 @@ def prepare_gantt_data(
             if tm_task.get("status") == "done":
                 # Ensure start date is set based on created_at or inferred from closed_at
                 if issue and issue.created_at:
-                    current_task_info["start"] = datetime.fromisoformat(
-                        issue.created_at
-                    ).date()
+                    current_task_info["start"] = datetime.fromisoformat(issue.created_at).date()
                 else:
                     # Fallback if no created_at for done task
-                    current_task_info["start"] = current_task_info["end"] - timedelta(
-                        days=1
-                    )
+                    current_task_info["start"] = current_task_info["end"] - timedelta(days=1)
 
                 # Ensure done task's start date is not pushed beyond its end date (closed_at)
                 if current_task_info["start"] > current_task_info["end"]:
                     current_task_info["start"] = current_task_info["end"]
                     logger.warning(
-                        f"Task {tm_id} (done): Adjusted start date to be <= end date: {current_task_info['start']}"
+                        operation="prepare_gantt_data",
+                        message=f"Task {tm_id} (done): Adjusted start date to be <= end date: {current_task_info['start']}",
+                        context={
+                            "task_id": tm_id,
+                            "start_date": str(current_task_info["start"]),
+                            "end_date": str(current_task_info["end"]),
+                        },
                     )
                 # If start and end dates are the same for a done task, extend end date by 1 day for visibility
                 if current_task_info["start"] == current_task_info["end"]:
                     current_task_info["end"] = current_task_info["end"] + timedelta(days=1)
+                    logger.debug(
+                        operation="prepare_gantt_data",
+                        message=f"Task {tm_id} (done): End date adjusted by 1 day for visibility: {current_task_info['end']}",
+                        context={
+                            "task_id": tm_id,
+                            "start_date": str(current_task_info["start"]),
+                            "end_date": str(current_task_info["end"]),
+                        },
+                    )
                 continue  # Skip further ASAP logic for done tasks
 
             # --- 2. Handle non-done tasks: apply ASAP logic ---
@@ -238,20 +295,12 @@ def prepare_gantt_data(
                 for dep_id in tm_task["dependencies"]:
                     dep_dates = task_dates.get(str(dep_id))
                     if dep_dates and dep_dates["end"]:
-                        if (
-                            max_dep_end_date is None
-                            or dep_dates["end"] > max_dep_end_date
-                        ):
+                        if max_dep_end_date is None or dep_dates["end"] > max_dep_end_date:
                             max_dep_end_date = dep_dates["end"]
 
                 if max_dep_end_date:
-                    dep_based_start = get_next_working_day(
-                        max_dep_end_date, country_holidays
-                    )
-                    if (
-                        earliest_possible_start is None
-                        or dep_based_start > earliest_possible_start
-                    ):
+                    dep_based_start = get_next_working_day(max_dep_end_date, country_holidays)
+                    if earliest_possible_start is None or dep_based_start > earliest_possible_start:
                         earliest_possible_start = dep_based_start
 
             # Fallback if no dependencies and no specific created_at, or if dependencies result in earlier date
@@ -264,29 +313,36 @@ def prepare_gantt_data(
                     earliest_possible_start = today  # Final Fallback
 
             # Update current task's start date
-            if (
-                current_task_info["start"] is None
-                or earliest_possible_start > current_task_info["start"]
-            ):
+            if current_task_info["start"] is None or earliest_possible_start > current_task_info["start"]:
                 current_task_info["start"] = earliest_possible_start
                 logger.debug(
-                    f"Task {tm_id}: Start date set to {current_task_info['start']}"
+                    operation="prepare_gantt_data",
+                    message=f"Task {tm_id}: Start date set to {current_task_info['start']}",
+                    context={"task_id": tm_id, "start_date": str(current_task_info["start"])},
                 )
 
             # Ensure end_date is not before start_date (minimum 1 day duration)
             if current_task_info["end"] < current_task_info["start"]:
-                current_task_info["end"] = current_task_info["start"] + timedelta(
-                    days=1
-                )
+                current_task_info["end"] = current_task_info["start"] + timedelta(days=1)
                 logger.warning(
-                    f"Task {tm_id}: End date adjusted to {current_task_info['end']} to be >= start date."
+                    operation="prepare_gantt_data",
+                    message=f"Task {tm_id}: End date adjusted to {current_task_info['end']} to be >= start date.",
+                    context={
+                        "task_id": tm_id,
+                        "start_date": str(current_task_info["start"]),
+                        "end_date": str(current_task_info["end"]),
+                    },
                 )
             elif current_task_info["end"] == current_task_info["start"]:
-                current_task_info["end"] = current_task_info["start"] + timedelta(
-                    days=1
-                )
+                current_task_info["end"] = current_task_info["start"] + timedelta(days=1)
                 logger.debug(
-                    f"Task {tm_id}: End date adjusted by 1 day as start and end were same."
+                    operation="prepare_gantt_data",
+                    message=f"Task {tm_id}: End date adjusted by 1 day as start and end were same.",
+                    context={
+                        "task_id": tm_id,
+                        "start_date": str(current_task_info["start"]),
+                        "end_date": str(current_task_info["end"]),
+                    },
                 )
 
     # Final pass: build DataFrame
@@ -296,12 +352,16 @@ def prepare_gantt_data(
 
         if start_date is None:
             logger.warning(
-                f"Task {tm_id}: Start date could not be determined. Using today."
+                operation="prepare_gantt_data",
+                message=f"Task {tm_id}: Start date could not be determined. Using today.",
+                context={"task_id": tm_id},
             )
             start_date = today
         if end_date is None:
             logger.warning(
-                f"Task {tm_id}: End date could not be determined. Using start_date + 7 days."
+                operation="prepare_gantt_data",
+                message=f"Task {tm_id}: End date could not be determined. Using start_date + 7 days.",
+                context={"task_id": tm_id, "start_date": str(start_date)},
             )
             end_date = start_date + timedelta(days=7)
 
@@ -325,7 +385,9 @@ def prepare_gantt_data(
             )
         )
         logger.debug(
-            f"Task {tm_id}: Start={start_date}, End={end_date}, Status={status}"
+            operation="prepare_gantt_data",
+            message=f"Task {tm_id}: Start={start_date}, End={end_date}, Status={status}",
+            context={"task_id": tm_id, "start": str(start_date), "end": str(end_date), "status": status},
         )
 
         # Subtasks from description
@@ -348,10 +410,21 @@ def prepare_gantt_data(
                     )
                 )
                 logger.debug(
-                    f"Subtask {sub_task_name}: Start={start_date}, End={end_date}, Status={sub_task_status}"
+                    operation="prepare_gantt_data",
+                    message=f"Subtask {sub_task_name}: Start={start_date}, End={end_date}, Status={sub_task_status}",
+                    context={
+                        "subtask_name": sub_task_name,
+                        "start": str(start_date),
+                        "end": str(end_date),
+                        "status": sub_task_status,
+                    },
                 )
 
-    logger.info(f"Prepared {len(df_data)} entries for Gantt chart.")
+    logger.info(
+        operation="prepare_gantt_data",
+        message=f"Prepared {len(df_data)} entries for Gantt chart.",
+        context={"num_entries": len(df_data)},
+    )
     return pd.DataFrame(df_data)
 
 
@@ -369,7 +442,7 @@ def generate_gantt_chart(
 ):
     """Generates and saves the Gantt chart HTML file using Plotly."""
     if df.empty:
-        logger.warning("DataFrame is empty. Cannot generate chart.")
+        logger.warning(operation="generate_gantt_chart", message="DataFrame is empty. Cannot generate chart.")
         return
 
     fig = px.timeline(
@@ -427,7 +500,7 @@ def generate_gantt_chart(
     annotations = []
     if y_axis_task_labels is None or not y_axis_task_labels:  # Added check
         logger.warning(
-            "No y-axis tick labels found. Skipping dependency arrow drawing."
+            operation="generate_gantt_chart", message="No y-axis tick labels found. Skipping dependency arrow drawing."
         )
     else:
         y_axis_task_ids = [label.split(": ", 1)[0] for label in y_axis_task_labels]
@@ -438,7 +511,9 @@ def generate_gantt_chart(
                 current_task_df_row = df[df["TaskID"] == tm_id]
                 if current_task_df_row.empty:
                     logger.warning(
-                        f"Current task {tm_id} not found in DataFrame for dependency drawing."
+                        operation="generate_gantt_chart",
+                        message=f"Current task {tm_id} not found in DataFrame for dependency drawing.",
+                        context={"task_id": tm_id},
                     )
                     continue
                 current_task_df_row = current_task_df_row.iloc[0]
@@ -447,7 +522,9 @@ def generate_gantt_chart(
                     dep_task_df_row = df[df["TaskID"] == str(dep_id)]
                     if dep_task_df_row.empty:
                         logger.warning(
-                            f"Dependent task {dep_id} not found in DataFrame for dependency drawing."
+                            operation="generate_gantt_chart",
+                            message=f"Dependent task {dep_id} not found in DataFrame for dependency drawing.",
+                            context={"dependency_id": dep_id},
                         )
                         continue
                     dep_task_df_row = dep_task_df_row.iloc[0]
@@ -498,20 +575,36 @@ def generate_gantt_chart(
     if not dry_run:
         if output_format == "html":
             fig.write_html(str(output_path))
-            logger.info(f"Gantt chart saved to: {output_path}")
+            logger.info(
+                operation="generate_gantt_chart",
+                message=f"Gantt chart saved to: {output_path}",
+                context={"output_path": str(output_path), "format": "html"},
+            )
         elif output_format in ["png", "jpeg", "webp", "svg", "pdf"]:
             try:
                 fig.write_image(str(output_path))
-                logger.info(f"Gantt chart saved to: {output_path}")
+                logger.info(
+                    operation="generate_gantt_chart",
+                    message=f"Gantt chart saved to: {output_path}",
+                    context={"output_path": str(output_path), "format": output_format},
+                )
             except Exception as e:
                 logger.error(
-                    f"Failed to save image to {output_path}. Ensure kaleido is installed: {e}"
+                    operation="generate_gantt_chart",
+                    message=f"Failed to save image to {output_path}. Ensure kaleido is installed: {e}",
+                    context={"output_path": str(output_path), "error": str(e)},
                 )
         else:
-            logger.error(f"Unsupported output format: {output_format}")
+            logger.error(
+                operation="generate_gantt_chart",
+                message=f"Unsupported output format: {output_format}",
+                context={"format": output_format},
+            )
     else:
         logger.info(
-            f"Dry run: Gantt chart would have been saved to: {output_path} (format: {output_format})"
+            operation="generate_gantt_chart",
+            message=f"Dry run: Gantt chart would have been saved to: {output_path} (format: {output_format})",
+            context={"output_path": str(output_path), "format": output_format, "dry_run": True},
         )
 
 
@@ -520,9 +613,7 @@ def generate_gantt_chart(
 
 def main():
     """Main function to run the Gantt chart generator."""
-    parser = argparse.ArgumentParser(
-        description="Generate an interactive Gantt chart from Taskmaster and GitLab data."
-    )
+    parser = argparse.ArgumentParser(description="Generate an interactive Gantt chart from Taskmaster and GitLab data.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -549,17 +640,15 @@ def main():
     )
     args = parser.parse_args()
 
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stdout,  # Ensure logs go to stdout
-    )
+    # VibeLogger handles its own configuration and output.
+    # We can set the minimum logging level for VibeLogger if needed,
+    # but for now, we'll let its internal config manage it.
+    # For example, to set a minimum level:
+    # vibe_config.min_level = args.log_level.upper()
 
-    logger.info("--- Starting Gantt Chart Generator ---")
+    logger.info(operation="main", message="--- Starting Gantt Chart Generator ---")
     if args.dry_run:
-        logger.info("Running in DRY RUN mode. No HTML file will be saved.")
+        logger.info(operation="main", message="Running in DRY RUN mode. No HTML file will be saved.", context={"dry_run": True})
 
     # 1. Load settings
     config = dotenv_values()
@@ -570,13 +659,13 @@ def main():
     holiday_country = config.get("HOLIDAY_COUNTRY", "JP")  # Default to Japan
 
     try:
-        country_holidays = holidays.CountryHoliday(
-            holiday_country, years=date.today().year
-        )
-        logger.info(f"Using holidays for {holiday_country}.")
+        country_holidays = holidays.CountryHoliday(holiday_country, years=date.today().year)
+        logger.info(operation="main", message=f"Using holidays for {holiday_country}.", context={"country": holiday_country})
     except KeyError:
         logger.warning(
-            f"Holiday country '{holiday_country}' not found. No holidays will be observed."
+            operation="main",
+            message=f"Holiday country '{holiday_country}' not found. No holidays will be observed.",
+            context={"country": holiday_country},
         )
         country_holidays = {}
 
@@ -590,7 +679,7 @@ def main():
         gitlab_ssl_verify = ssl_verify_str
 
     if not all([gitlab_base_url, gitlab_token, project_id]):  # Changed from gitlab_url
-        logger.critical("Missing GitLab configuration in .env file. Aborting.")
+        logger.critical(operation="main", message="Missing GitLab configuration in .env file. Aborting.")
         sys.exit(1)
 
     # 2. Connect to GitLab
@@ -598,9 +687,9 @@ def main():
     try:
         gl = gitlab.Gitlab(gitlab_base_url, private_token=gitlab_token, ssl_verify=gitlab_ssl_verify)  # Changed from gitlab_url
         gl.auth()
-        logger.info("Successfully authenticated with GitLab.")
+        logger.info(operation="main", message="Successfully authenticated with GitLab.")
     except Exception as e:
-        logger.critical(f"Failed to connect to GitLab: {e}. Aborting.")
+        logger.critical(operation="main", message=f"Failed to connect to GitLab: {e}. Aborting.", context={"error": str(e)})
         sys.exit(1)
 
     # 3. Process data
@@ -608,24 +697,30 @@ def main():
     if gantt_start_date_str:
         try:
             overall_start_date = datetime.strptime(gantt_start_date_str, "%Y-%m-%d").date()
-            logger.info(f"Overall Gantt start date from .env: {overall_start_date}")
+            logger.info(
+                operation="main",
+                message=f"Overall Gantt start date from .env: {overall_start_date}",
+                context={"start_date": str(overall_start_date)},
+            )
         except ValueError:
-            logger.warning(f"Invalid GANTT_START_DATE format in .env: {gantt_start_date_str}. Ignoring.")
+            logger.warning(
+                operation="main",
+                message=f"Invalid GANTT_START_DATE format in .env: {gantt_start_date_str}. Ignoring.",
+                context={"gantt_start_date_str": gantt_start_date_str},
+            )
 
     taskmaster_tasks = load_taskmaster_tasks()
     if not taskmaster_tasks:
-        logger.critical("No Taskmaster tasks loaded. Aborting.")
+        logger.critical(operation="main", message="No Taskmaster tasks loaded. Aborting.")
         sys.exit(1)
 
     gitlab_issues, project_name = get_gitlab_issues(gl, project_id)  # Get project_name here
     if not gitlab_issues:
-        logger.warning("No GitLab issues fetched. Chart might be incomplete.")
+        logger.warning(operation="main", message="No GitLab issues fetched. Chart might be incomplete.")
 
     task_id_to_issue = map_tasks_and_issues(gitlab_issues)
 
-    df = prepare_gantt_data(
-        taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays
-    )
+    df = prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, country_holidays)
 
     # 4. Generate chart
     generate_gantt_chart(
@@ -638,7 +733,7 @@ def main():
         country_holidays,
     )
 
-    logger.info("--- Gantt Chart Generation Finished ---")
+    logger.info(operation="main", message="--- Gantt Chart Generation Finished ---")
 
 
 if __name__ == "__main__":

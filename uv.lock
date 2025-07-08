@@ -955,6 +955,7 @@ dependencies = [
     { name = "python-dotenv", version = "1.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "python-gitlab", version = "4.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "python-gitlab", version = "6.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "vibelogger" },
 ]
 
 [package.metadata]
@@ -965,6 +966,7 @@ requires-dist = [
     { name = "plotly" },
     { name = "python-dotenv" },
     { name = "python-gitlab" },
+    { name = "vibelogger", specifier = ">=0.1.0" },
 ]
 
 [[package]]
@@ -1001,4 +1003,13 @@ resolution-markers = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+]
+
+[[package]]
+name = "vibelogger"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/6a/3435eb31864349f9a23d43c89748f5774a527be2b56fa0a31859ba099a3c/vibelogger-0.1.0.tar.gz", hash = "sha256:0d376e0d60723ffb2cb5a1d53dfb97fbef5c6ff0170291a071078455caf555a0", size = 29731, upload-time = "2025-07-07T12:46:55.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/55/bcb4ad2d0dc1621cc5cda4b76a692baa96e1dc97b1fbdbd11580ac25ae73/vibelogger-0.1.0-py3-none-any.whl", hash = "sha256:ff375c795358fc04ca82ce5036ac5b65d2b6a846e83e9d7c765ce322e8c980ab", size = 17392, upload-time = "2025-07-07T12:46:54.177Z" },
 ]

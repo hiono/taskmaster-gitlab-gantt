@@ -12,6 +12,7 @@ dependencies = [
     "plotly",
     "holidays",
     "kaleido",
+    "vibelogger>=0.1.0",
 ]
 requires-python = ">=3.8"
 readme = "README.md"
