@@ -55,6 +55,8 @@ This tool helps visualize project progress by integrating tasks from Taskmaster 
 
 Create a `.env` file in the root directory of the project with the following content:
 
+**Note on `.env` file loading:** The tool now automatically searches for the `.env` file in the current and parent directories. If not found, it attempts to load from the current working directory as a fallback. This means you generally don't need to specify the full path to the `.env` file in the code.
+
 ```env
 # GitLab Configuration
 GITLAB_BASE_URL="https://your-gitlab-instance.com" # Your GitLab instance base URL (e.g., https://gitlab.com or https://your-instance.com/git)

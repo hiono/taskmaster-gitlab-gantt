@@ -11,6 +11,7 @@ Refer to `taskmaster-gitlab-gantt-spec.md` for detailed specifications.
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import date, datetime, timedelta
@@ -21,7 +22,7 @@ import holidays
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from dotenv import dotenv_values
+from dotenv import dotenv_values, find_dotenv
 from vibelogger import VibeLoggerConfig, create_logger
 
 # --- Constants & Settings ---
@@ -318,7 +319,7 @@ def prepare_gantt_data(taskmaster_tasks, task_id_to_issue, overall_start_date, c
                 logger.debug(
                     operation="prepare_gantt_data",
                     message=f"Task {tm_id}: Start date set to {current_task_info['start']}",
-                    context={"task_id": tm_id, "start_date": str(current_task_info["start"])},
+                    context={"task_id": tm_id, "start_date": str(current_task_info["start"])}
                 )
 
             # Ensure end_date is not before start_date (minimum 1 day duration)
@@ -647,11 +648,27 @@ def main():
     # vibe_config.min_level = args.log_level.upper()
 
     logger.info(operation="main", message="--- Starting Gantt Chart Generator ---")
+    logger.info(operation="main", message=f"Current working directory: {os.getcwd()}")
     if args.dry_run:
         logger.info(operation="main", message="Running in DRY RUN mode. No HTML file will be saved.", context={"dry_run": True})
 
     # 1. Load settings
-    config = dotenv_values()
+    dotenv_file_path = find_dotenv()
+    logger.info(operation="main", message=f"find_dotenv() result: {dotenv_file_path}")
+
+    if dotenv_file_path:
+        config = dotenv_values(dotenv_file_path)
+        logger.info(operation="main", message=f"Loaded .env from: {dotenv_file_path}")
+    else:
+        # Fallback to current directory if find_dotenv fails
+        logger.warning(operation="main", message="find_dotenv() failed. Attempting to load .env from current directory.")
+        config = dotenv_values(dotenv_path=".")
+        if config:
+            logger.info(operation="main", message="Successfully loaded .env from current directory.")
+        else:
+            logger.critical(operation="main", message="Failed to load .env from current directory. Aborting.")
+            sys.exit(1)
+
     gitlab_base_url = config.get("GITLAB_BASE_URL")
     gitlab_token = config.get("GITLAB_PERSONAL_ACCESS_TOKEN")
     project_id = config.get("GITLAB_PROJECT_ID")

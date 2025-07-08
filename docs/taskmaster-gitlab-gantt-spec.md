@@ -131,7 +131,7 @@ graph TD
 
 ### 3.2. 非機能要件 (実装詳細)
 
-- 設定管理: `dotenv.dotenv_values()`を使用して`.env`ファイルから設定を読み込む。
+- 設定管理: `python-dotenv`ライブラリの`find_dotenv()`関数を使用して`.env`ファイルを自動的に検索し、見つからない場合はカレントワーキングディレクトリをフォールバックとして試行する。`dotenv.dotenv_values()`を使用して設定を読み込む。
 - ロギング: `logging`モジュールを使用し、`argparse`で指定された`--log-level`に基づいてログレベルを設定。`basicConfig`でフォーマットと出力先（`sys.stdout`）を設定。
 - エラーハンドリング: GitLab API呼び出しやファイル操作において`try-except`ブロックを使用する。
 - `gitlab.exceptions.GitlabError`や`FileNotFoundError`、`json.JSONDecodeError`などを捕捉する。
