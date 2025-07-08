@@ -4,11 +4,11 @@
 
 ### 目的
 
-`taskmaster`で管理されているタスク情報とGitLabのIssue情報を統合し、プロジェクトの進捗状況を視覚的に把握するためのガントチャートを自動生成する。プロジェクトマネジメントを効率化し、関係者間での情報共有を促進する。
+`taskmaster`で管理するタスク情報とGitLabのIssue情報を統合し、プロジェクトの進捗状況を視覚的に把握するためのガントチャートを自動生成する。プロジェクトマネジメントを効率化し、関係者間での情報共有を促進する。
 
 ### スコープ
 
-GitLabのIssueおよび`taskmaster`のタスク情報をデータソースとし、`plotly`ライブラリを用いてインタラクティブなHTML形式のガントチャートを生成する。タスクの期間を考慮し、Issueタイプやステータスに応じてガントチャート上のバーを色分けすることで、視覚的に情報を把握しやすくする。依存関係を表示し、非稼働日を考慮する。生成されたガントチャートはファイルとして出力される。
+GitLabのIssueおよび`taskmaster`のタスク情報をデータソースとする。`plotly`ライブラリを用いてインタラクティブなHTML形式のガントチャートを生成する。タスクの期間を考慮する。Issueタイプやステータスに応じてバーの色を分け、視覚的に情報を把握しやすくする。依存関係を表示する。非稼働日も考慮する。生成したガントチャートをファイルとして出力する。
 
 ### 機能
 
@@ -28,14 +28,14 @@ GitLabのIssue情報（タイトル、説明文、作成日、期限日、完了
 ### 出力
 
 - インタラクティブなHTML形式のガントチャートファイル（デフォルト: `gantt_chart.html`）
-- 指定された場合はPNG, JPEG, WEBP, SVG, PDF形式の画像ファイル。
+- 指定した場合はPNG, JPEG, WEBP, SVG, PDF形式の画像ファイル。
 - 標準出力: スクリプトの実行状況を示すログメッセージ。ログレベルはコマンドライン引数`--log-level`で制御可能である。
 
 ## 2. 外面仕様書
 
 ### 2.1. 機能要件
 
-GitLabの特定プロジェクトのIssue一覧と`taskmaster`のタスク情報を統合し、ガントチャートを生成する。以下の機能要件を満たすように設計されている。
+GitLabの特定プロジェクトのIssue一覧と`taskmaster`のタスク情報を統合し、ガントチャートを生成する。以下の機能要件を満たすように設計する。
 
 ```mermaid
 graph TD
@@ -59,14 +59,14 @@ graph TD
     M --> S[非稼働日を背景で視覚化]
 ```
 
-上記のフローチャートは、機能要件の全体像を視覚的に示している。GitLab IssueとTaskmasterタスクの統合から始まり、Issue情報の取得、タスクリストのパース、タスク期間の決定を経て、ガントチャートの生成に至るプロセスを表している。各ステップで考慮される要素や条件も明示している。
+上記のフローチャートは機能要件の全体像を視覚的に示す。GitLab IssueとTaskmasterタスクの統合から始まる。Issue情報の取得、タスクリストのパース、タスク期間の決定を経て、ガントチャートの生成に至るプロセスを表す。各ステップで考慮する要素や条件も明示する。
 
 ### 2.2. 非機能要件
 
-- Python 3.xが動作する環境で実行可能である。
-- `python-gitlab`, `python-dotenv`, `pandas`, `plotly`, `holidays`ライブラリがインストールされている。
-- GitLab APIの接続情報とオプションの`GANTT_START_DATE`は`.env`ファイルで管理される。
-- 生成されたガントチャートはインタラクティブなHTMLファイルとして出力される。
+- Python 3.x環境で実行可能である。
+- `python-gitlab`, `python-dotenv`, `pandas`, `plotly`, `holidays`ライブラリが必要である。
+- GitLab APIの接続情報とオプションの`GANTT_START_DATE`を`.env`ファイルで管理する。
+- 生成したガントチャートをインタラクティブなHTMLファイルとして出力する。
 - `--dry-run`オプションにより、ファイル出力なしでシミュレーション実行が可能である。
 - `--log-level`オプションでログの詳細度を制御する。
 - `--output`オプションで出力ファイルパスを指定する。
@@ -76,7 +76,7 @@ graph TD
 
 - 言語: Python 3
 - 主要ライブラリ: `python-gitlab`, `python-dotenv`, `pandas`, `plotly`, `holidays`
-- アーキテクチャ: コマンドラインツールとして動作し、TaskmasterのJSONファイルとGitLab APIからデータを取得・加工し、Plotlyを用いてガントチャートを生成する。
+- アーキテクチャ: コマンドラインツールとして動作する。TaskmasterのJSONファイルとGitLab APIからデータを取得・加工する。Plotlyを用いてガントチャートを生成する。
 
 ## 3. 内部仕様書
 
@@ -84,17 +84,17 @@ graph TD
 
 #### データ取得
 
-- `load_taskmaster_tasks(tag="master")`: `.taskmaster/tasks/tasks.json`からタスクを読み込み、`full_id`をキーとするフラットな辞書構造に変換。サブタスクも再帰的に処理。
-- `get_gitlab_issues(gl, project_id)`: `python-gitlab`ライブラリを使用して、指定されたGitLabプロジェクトの全Issueを取得。
-- `map_tasks_and_issues(gitlab_issues)`: GitLab IssueのタイトルからTaskmasterのタスクIDを抽出し、`{Taskmaster_ID: GitLab_Issue_Object}`のマッピングを作成。
-- `parse_task_list(description)`: IssueのDescriptionからMarkdown形式のタスクリスト（`- [ ] Task`）を正規表現(`re.compile(r"^[ \t]*- \[([ |x])\] (.*)$", re.MULTILINE)`)でパースし、完了状態とタイトルを抽出。
+- `load_taskmaster_tasks(tag="master")`: `.taskmaster/tasks/tasks.json`からタスクを読み込み、`full_id`をキーとするフラットな辞書構造に変換する。サブタスクも再帰的に処理する。
+- `get_gitlab_issues(gl, project_id)`: `python-gitlab`ライブラリを使用して、指定したGitLabプロジェクトの全Issueを取得する。
+- `map_tasks_and_issues(gitlab_issues)`: GitLab IssueのタイトルからTaskmasterのタスクIDを抽出し、`{Taskmaster_ID: GitLab_Issue_Object}`のマッピングを作成する。
+- `parse_task_list(description)`: IssueのDescriptionからMarkdown形式のタスクリスト（`- [ ] Task`）を正規表現(`re.compile(r"^[ \t]*- \[([ |x])\] (.*)$", re.MULTILINE)`)でパースし、完了状態とタイトルを抽出する。
 - スケジュール計算ロジック (`prepare_gantt_data`関数内):
   - **ASAP (As Soon As Possible) スケジューリング**に基づいてタスクの開始日と終了日を決定する。
   - 終了日 (`end_date`) の決定:
-    - Taskmasterのステータスが`done`かつGitLab Issueに`closed_at`があればそれを優先。
-    - なければ`due_date`。
+    - Taskmasterのステータスが`done`かつGitLab Issueに`closed_at`があればそれを優先する。
+    - なければ`due_date`とする。
     - どちらもなければ`today + 7 days`をフォールバックとする。
-    - `done`ではないタスクで、`end_date`が過去の場合でも、`end_date`を自動的に延長するロジックは削除された。
+    - `done`ではないタスクで、`end_date`が過去の場合でも、`end_date`を自動的に延長するロジックは削除した。
 
 #### 開始日 (`start_date`) の決定
 
@@ -102,7 +102,7 @@ graph TD
       1. 完了済みタスク (`status: done`):
          - GitLab Issueの`created_at`を開始日とし、`closed_at`を終了日とする。
          - `created_at`がない場合は、`closed_at`から1日を逆算した日を開始日とする。
-         - これらの日付は他のロジックの影響を受けず固定される。
+         - これらの日付は他のロジックの影響を受けず固定する。
       2. 依存関係のあるタスク:
          - 全ての先行タスクの終了日の中で最も遅い日付の翌営業日を開始日とする。
       3. 独立したタスク (依存関係なし):
@@ -112,16 +112,16 @@ graph TD
          - 上記のいずれでも開始日が決定できない場合、全GitLab Issueの`created_at`の中で最も古い日付（`earliest_created_at`）を開始日とする。
          - `earliest_created_at`も決定できない場合は、`today`を開始日とする。
   - 期間の調整:
-    - `end_date < start_date`の場合、`end_date`を`start_date + 1 day`に調整。
-    - `end_date == start_date`の場合も同様に`end_date`を`start_date + 1 day`に調整し、最低1日の期間を確保。
+    - `end_date < start_date`の場合、`end_date`を`start_date + 1 day`に調整する。
+    - `end_date == start_date`の場合も同様に`end_date`を`start_date + 1 day`に調整し、最低1日の期間を確保する。
   - 営業日計算:
     - `is_working_day(d, country_holidays)`関数で土日および`holidays`ライブラリから取得した祝日をチェックする。
     - `get_next_working_day(d, country_holidays)`関数を用いて次の営業日を計算する。
 
 #### ガントチャート生成 (`generate_gantt_chart`関数内)
 
-- `plotly.express.timeline`を使用してガントチャートの基本を生成。
-- `fig.update_yaxes(autorange="reversed")`でY軸の表示順を反転。
+- `plotly.express.timeline`を使用してガントチャートの基本を生成する。
+- `fig.update_yaxes(autorange="reversed")`でY軸の表示順を反転する。
 - 非稼働日 (`is_working_day`がFalseの日) は`plotly.graph_objects.layout.Shape`で半透明の矩形を描画し、背景に表示する。
 - タスクバーの色分けは、`color_discrete_map`を使用してステータスに応じた色を設定する。
 - サブタスクは親タスクと同じ期間で、異なる色（グレー）で表示する。
@@ -131,12 +131,12 @@ graph TD
 
 ### 3.2. 非機能要件 (実装詳細)
 
-- 設定管理: `python-dotenv`ライブラリの`find_dotenv()`関数を使用して`.env`ファイルを自動的に検索し、見つからない場合はカレントワーキングディレクトリをフォールバックとして試行する。`dotenv.dotenv_values()`を使用して設定を読み込む。
-- ロギング: `logging`モジュールを使用し、`argparse`で指定された`--log-level`に基づいてログレベルを設定。`basicConfig`でフォーマットと出力先（`sys.stdout`）を設定。
+- 設定管理: `python-dotenv`ライブラリの`find_dotenv()`関数を使用して`.env`ファイルを自動的に検索する。見つからない場合はカレントワーキングディレクトリをフォールバックとして試行する。`dotenv.dotenv_values()`を使用して設定を読み込む。
+- ロギング: `logging`モジュールを使用し、`argparse`で指定した`--log-level`に基づいてログレベルを設定する。`basicConfig`でフォーマットと出力先（`sys.stdout`）を設定する。
 - エラーハンドリング: GitLab API呼び出しやファイル操作において`try-except`ブロックを使用する。
 - `gitlab.exceptions.GitlabError`や`FileNotFoundError`、`json.JSONDecodeError`などを捕捉する。
 - エラーの発生などに対して、適切なログメッセージを出力し、`sys.exit(1)`で終了する。
-- 出力形式の選択: `fig.write_html()`または`fig.write_image()`を使用し、`--format`引数に応じてHTMLまたは画像ファイルとして出力。画像出力には`kaleido`ライブラリが必要。
+- 出力形式の選択: `fig.write_html()`または`fig.write_image()`を使用し、`--format`引数に応じてHTMLまたは画像ファイルとして出力する。画像出力には`kaleido`ライブラリが必要である。
 
 ### 3.3. システム構成 (詳細: 処理フロー、データモデル、主要モジュール)
 
@@ -144,30 +144,30 @@ graph TD
 
 `main()`関数が以下の順序で処理を進行する。
 
-  1. コマンドライン引数のパース (`argparse`) とロギング設定。
+  1. コマンドライン引数のパース (`argparse`) とロギング設定を行う。
   2. `.env`ファイルからGitLab接続情報と`GANTT_START_DATE`を読み込む。
   3. `python-gitlab`クライアントの初期化と認証を実施する。
   4. `load_taskmaster_tasks()`でTaskmasterタスクを読み込む。
   5. `get_gitlab_issues()`でGitLab Issueを読み込む。
   6. `map_tasks_and_issues()`でTaskmasterタスクとGitLab Issueのマッピングを作成する。
   7. `prepare_gantt_data()`でガントチャート表示用のPandas DataFrameを準備する。
-  8. `generate_gantt_chart()`でガントチャートを生成し、指定されたパスと形式で出力する。
+  8. `generate_gantt_chart()`でガントチャートを生成し、指定したパスと形式で出力する。
 
 #### データモデル
 
-- Taskmasterタスク: `load_taskmaster_tasks`により、`id`, `title`, `description`, `status`, `dependencies`, `subtasks`などのフィールドを持つフラットな辞書としてメモリに保持される。
-- GitLab Issue: `get_gitlab_issues`により、`python-gitlab`のIssueオブジェクトとして取得される。`iid`, `title`, `description`, `created_at`, `due_date`, `closed_at`, `labels`, `issue_type`などの属性を持つ。
+- Taskmasterタスク: `load_taskmaster_tasks`により`id`, `title`, `description`, `status`, `dependencies`, `subtasks`などのフィールドを持つフラットな辞書としてメモリに保持する。
+- GitLab Issue: `get_gitlab_issues`により`python-gitlab`のIssueオブジェクトとして取得する。`iid`, `title`, `description`, `created_at`, `due_date`, `closed_at`, `labels`, `issue_type`などの属性を持つ。
 - `task_id_to_issue`: `{Taskmaster_ID: GitLab_Issue_Object}`形式の辞書で、TaskmasterタスクとGitLab Issueの紐付けに使用する。
-- ガントチャートDataFrame: `prepare_gantt_data`により生成されるPandas DataFrame。`Task` (タスク名), `Start` (開始日), `Finish` (終了日), `Status` (ステータス), `Color` (表示色), `TaskID` (元のTaskmaster ID) などのカラムを持つ。
+- ガントチャートDataFrame: `prepare_gantt_data`により生成するPandas DataFrame。`Task` (タスク名), `Start` (開始日), `Finish` (終了日), `Status` (ステータス), `Color` (表示色), `TaskID` (元のTaskmaster ID) などのカラムを持つ。
 - 主要モジュール:
-  - `load_taskmaster_tasks()`: Taskmasterタスクの読み込みとフラット化。
-  - `get_gitlab_issues()`: GitLab Issueの取得。
-  - `map_tasks_and_issues()`: Taskmaster IDとGitLab Issueのマッピング。
-  - `is_working_day()`: 営業日判定（土日・祝日考慮）。
-  - `get_next_working_day()`: 次の営業日計算。
-  - `parse_task_list()`: Issue DescriptionからのMarkdownタスクリストのパース。
-  - `prepare_gantt_data()`: ガントチャート用データフレームの準備、日付計算ロジックのコア。
-  - `generate_gantt_chart()`: Plotlyを使用したガントチャートの生成とファイル出力。
+  - `load_taskmaster_tasks()`: Taskmasterタスクの読み込みとフラット化を行う。
+  - `get_gitlab_issues()`: GitLab Issueの取得を行う。
+  - `map_tasks_and_issues()`: Taskmaster IDとGitLab Issueのマッピングを行う。
+  - `is_working_day()`: 営業日判定（土日・祝日考慮）を行う。
+  - `get_next_working_day()`: 次の営業日計算を行う。
+  - `parse_task_list()`: Issue DescriptionからのMarkdownタスクリストのパースを行う。
+  - `prepare_gantt_data()`: ガントチャート用データフレームの準備、日付計算ロジックのコアを担う。
+  - `generate_gantt_chart()`: Plotlyを使用したガントチャートの生成とファイル出力を行う。
 
 ## 4. ユーザーマニュアル
 
@@ -179,14 +179,14 @@ graph TD
 
 前提条件: Python 3.x以上をインストールする。
 
-ライブラリのインストール: `pyproject.toml`に記載されている依存ライブラリをインストールする。プロジェクトのルートディレクトリ (`taskmaster-gitlab-gantt/`) で、以下のコマンドを実行する。
+ライブラリのインストール: `pyproject.toml`に記載した依存ライブラリをインストールする。プロジェクトのルートディレクトリ (`taskmaster-gitlab-gantt/`) で、以下のコマンドを実行する。
 
 ```bash
 uv venv # 仮想環境がまだない場合
 uv pip install .
 ```
 
-画像出力する場合は`kaleido`もインストールしてください。
+画像出力する場合は`kaleido`もインストールする。
 
 ```bash
 uv pip install "kaleido"
@@ -252,12 +252,12 @@ uv run tmgantt --log-level DEBUG
 
 ### 5.1. デバッグ方法
 
-- プロジェクトのインストール: プロジェクトのルートディレクトリ (`taskmaster-gitlab-gantt/`) で`uv venv`、`uv pip install .`を実行。
-- コマンドラインからの実行: `pyproject.toml`で定義したエントリポイント (`tmgantt`) を使用。
+- プロジェクトのインストール: プロジェクトのルートディレクトリ (`taskmaster-gitlab-gantt/`) で`uv venv`、`uv pip install .`を実行する。
+- コマンドラインからの実行: `pyproject.toml`で定義したエントリポイント (`tmgantt`) を使用する。
   - Dry Runモード: `tmgantt --dry-run --log-level DEBUG`
   - 詳細ログ: `tmgantt --log-level DEBUG`
   - 出力形式の指定: `tmgantt --format png --output my_gantt_chart.png`
-- Pythonデバッガーの使用 (VS Codeなど): `.vscode/launch.json`を設定し、`main.py`をデバッグ実行。
+- Pythonデバッガーの使用 (VS Codeなど): `.vscode/launch.json`を設定し、`main.py`をデバッグ実行する。
 
 ### 5.2. 公開方法
 
@@ -282,7 +282,7 @@ uv run tmgantt --log-level DEBUG
 
 GitLabのマイルストーン機能や特定のラベルを、ガントチャート上で視覚的に区別できるマイルストーンとして表示する機能の検討。
 
-- 国際化（i18n）の考慮: 祝日計算ロジックを`holidays`ライブラリへ移行済み。今後、より精度の高い祝日情報が必要な国（例：中国の振替休日）については、各国のコントリビューターによる改善や、専用APIの利用を検討する。
+- 国際化（i18n）の考慮: 祝日計算ロジックを`holidays`ライブラリへ移行済みである。今後、より精度の高い祝日情報が必要な国（例：中国の振替休日）については、各国のコントリビューターによる改善や、専用APIの利用を検討する。
 - パフォーマンス最適化: 大量のタスクや依存関係がある場合の、データ処理およびチャート生成のパフォーマンス改善。
 - CLIオプションの追加: ガントチャートの期間指定、特定のタスクのフィルタリング、出力形式の選択など、より柔軟なCLIオプションの提供。
 
